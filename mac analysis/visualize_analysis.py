@@ -17,7 +17,7 @@ plt.rcParams['axes.unicode_minus'] = False
 
 def load_data():
     """加载数据"""
-    df = pd.read_excel('visualize raw data.xlsx', sheet_name='Sheet1')
+    df = pd.read_excel('visualize raw data 3 mix spec.xlsx', sheet_name='Sheet1')
     print("=== 数据加载成功 ===")
     print(f"数据形状: {df.shape}")
     print(f"\n数据预览:")
