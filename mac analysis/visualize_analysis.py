@@ -55,14 +55,15 @@ def analyze_gen_trends(df):
         print(f"    Source/Spec: {latest_src:.2f} vs {target} (差距: {latest_src - target:+.2f})")
 
 def create_visualization(df):
-    """创建可视化图表 - 3个图表布局"""
-    
+    """创建可视化图表 - 使用 Mix Speed Spec 数据"""
+
     # 获取唯一的 Type L1
     type_l1_list = df['Type L1'].unique()
     gen_list = ['FY2425', 'FY2526', 'FY2627']
-    
+
     fig, axes = plt.subplots(2, 2, figsize=(16, 12))
-    fig.suptitle('Type L1 Source Analysis: Past Gen vs Gen12 Target', fontsize=16, fontweight='bold')
+    fig.suptitle('Type L1 Source Analysis (Mix Speed Spec): Past Gen vs Gen12 Target',
+                 fontsize=16, fontweight='bold')
     
     colors = {'FY2425': '#3498db', 'FY2526': '#e74c3c', 'FY2627': '#2ecc71'}
     
@@ -100,8 +101,8 @@ def create_visualization(df):
         ax1.text(j+0.65, target, f'Target: {target}', va='center', fontsize=9)
     
     ax1.set_xlabel('Type L1', fontsize=12)
-    ax1.set_ylabel('Source in BC scope / Spec', fontsize=12)
-    ax1.set_title('Source in BC scope / Spec', fontsize=13, fontweight='bold')
+    ax1.set_ylabel('Source in BC scope / Spec (Mix Speed)', fontsize=12)
+    ax1.set_title('Source in BC scope / Spec (Mix Speed)', fontsize=13, fontweight='bold')
     ax1.set_xticks(x + width)
     ax1.set_xticklabels(type_l1_list)
     ax1.legend()
@@ -136,8 +137,8 @@ def create_visualization(df):
         ax2.text(j+0.65, target, f'Target: {target}', va='center', fontsize=9)
     
     ax2.set_xlabel('Type L1', fontsize=12)
-    ax2.set_ylabel('Total Source QTY / Spec', fontsize=12)
-    ax2.set_title('Total Source QTY / Spec', fontsize=13, fontweight='bold')
+    ax2.set_ylabel('Total Source QTY / Spec (Mix Speed)', fontsize=12)
+    ax2.set_title('Total Source QTY / Spec (Mix Speed)', fontsize=13, fontweight='bold')
     ax2.set_xticks(x + width)
     ax2.set_xticklabels(type_l1_list)
     ax2.legend()
@@ -178,8 +179,8 @@ def create_visualization(df):
                     ha='center', va='bottom', fontsize=8)
     
     ax3.set_xlabel('Type L1', fontsize=12)
-    ax3.set_ylabel('Source QTY / Spec', fontsize=12)
-    ax3.set_title('Source / Spec Compare BC, with PCR and Gen12 Guidance', fontsize=13, fontweight='bold')
+    ax3.set_ylabel('Source QTY / Spec (Mix Speed)', fontsize=12)
+    ax3.set_title('Source / Spec Compare (Mix Speed) with Gen12 Guidance', fontsize=13, fontweight='bold')
     ax3.set_xticks(x)
     ax3.set_xticklabels(type_l1_list)
     ax3.legend()
@@ -232,8 +233,8 @@ def create_visualization(df):
                 ha='right', va='bottom', fontsize=8, color='#555555')
     
     ax4.set_xlabel('Type L1', fontsize=12)
-    ax4.set_ylabel('Spec Total (Dedup)', fontsize=12)
-    ax4.set_title('Spec Total (Dedup) Trend vs Gen12 SBB Plan', fontsize=13, fontweight='bold')
+    ax4.set_ylabel('Spec Total (Mix Speed)', fontsize=12)
+    ax4.set_title('Spec Total (Mix Speed) Trend vs Gen12 SBB Plan', fontsize=13, fontweight='bold')
     ax4.set_xticks(x)
     ax4.set_xticklabels(type_l1_list)
     ax4.legend()
