@@ -13,15 +13,22 @@ from pathlib import Path
 
 def load_data(file_path):
     """加载Excel数据"""
-    df = pd.read_excel(file_path)
+    # 尝试读取 'SP' sheet，如果不存在则读取第一个 sheet
+    try:
+        df = pd.read_excel(file_path, sheet_name='SP')
+        print(f"读取 'SP' sheet 成功")
+    except ValueError:
+        df = pd.read_excel(file_path)
+        print(f"读取默认 sheet")
+
     print(f"数据维度: {df.shape}")
     print(f"列名: {df.columns.tolist()[:10]}...")
-    
+
     # PCR 列统计信息
     print(f"\nPCR 列统计:")
     print(f"  有值行数 (Source introduced by PCR): {df['PCR'].notna().sum()}")
     print(f"  无值行数 (Source in BC scope): {df['PCR'].isna().sum()}")
-    
+
     return df
 
 
@@ -89,6 +96,38 @@ def get_unique_sources_by_description(df, group_by_cols=None):
     }
 
 
+def get_spec_qty_mix_speed(df):
+    """
+    计算 Spec QTY (mix Speed) - 基于 Type L1 + Density 去重，忽略 Speed
+
+    对于相同的 Type L1 和 Density，但不同 Speed 的 Spec，视为同一个 Spec
+
+    返回:
+        int: mix speed 版本的 spec 数量
+    """
+    if 'Type L1' not in df.columns or 'Density' not in df.columns or 'Spec(Mandatory)' not in df.columns:
+        # 如果缺少必要的列，回退到标准 Spec 计数
+        return df['Spec(Mandatory)'].nunique() if 'Spec(Mandatory)' in df.columns else 0
+
+    # 创建唯一键：(Type L1, Density)
+    # 对于每个 Type L1 + Density 组合，只计算一次 Spec
+    unique_specs = set()
+
+    for _, row in df.iterrows():
+        type_l1 = row.get('Type L1', '')
+        density = row.get('Density', '')
+        spec = row.get('Spec(Mandatory)', '')
+
+        if spec:  # 只统计非空 Spec
+            unique_key = (type_l1, density, spec)
+            unique_specs.add(unique_key)
+
+    # 按 Type L1 + Density 分组，计算唯一的 (Type L1, Density) 组合数
+    type_density_pairs = set((key[0], key[1]) for key in unique_specs)
+
+    return len(type_density_pairs)
+
+
 def count_sources_by_pcr(df, use_description_dedup=True):
     """
     按 PCR 列分类统计 source 数量和 Spec 数量
@@ -96,6 +135,7 @@ def count_sources_by_pcr(df, use_description_dedup=True):
     - Source introduced by PCR: PCR 列有值的 Source 唯一值数量
     - Source in BC scope: PCR 列无值的 Source 唯一值数量
     - Spec Total: Spec(Mandatory) 唯一值数量
+    - Spec Total (mix Speed): 基于 Type L1 + Density 去重后的 Spec 数量
     """
     if use_description_dedup:
         # 使用基于 Part Description 前 30 字符的去重逻辑
@@ -112,11 +152,15 @@ def count_sources_by_pcr(df, use_description_dedup=True):
     # 统计 Spec(Mandatory) 数量（保持不变）
     spec_total = df['Spec(Mandatory)'].nunique() if 'Spec(Mandatory)' in df.columns else 0
 
+    # 统计 Spec Total (mix Speed) - 忽略 Speed 差异
+    spec_total_mix_speed = get_spec_qty_mix_speed(df)
+
     return {
         'Source Total': total,
         'Source introduced by PCR': pcr_sources,
         'Source in BC scope': bc_scope_sources,
-        'Spec Total': spec_total
+        'Spec Total': spec_total,
+        'Spec Total (mix Speed)': spec_total_mix_speed
     }
 
 
@@ -505,6 +549,7 @@ def generate_pcr_summary(df):
             # 计算百分比和比率（去重版本 - 汇总后计算）
             total = source_counts['Source Total']
             spec_total = source_counts['Spec Total']
+            spec_total_mix_speed = source_counts['Spec Total (mix Speed)']
             pcr_pct = (source_counts['Source introduced by PCR'] / total * 100) if total > 0 else 0
             bc_pct = (source_counts['Source in BC scope'] / total * 100) if total > 0 else 0
             overlap_pct = (overlap_count / total * 100) if total > 0 else 0
@@ -513,6 +558,7 @@ def generate_pcr_summary(df):
             # 计算不去重版本（按 Family 累加，基于 Part Description 前 30 字符去重）
             sum_sources_nodedup = 0
             sum_specs_nodedup = 0
+            sum_specs_mix_speed_nodedup = 0
             sum_bc_sources_nodedup = 0
             for family in gen_df['Family Name'].dropna().unique():
                 family_df = gen_df[gen_df['Family Name'] == family]
@@ -520,12 +566,27 @@ def generate_pcr_summary(df):
                 sum_sources_nodedup += family_source_counts['total']
                 sum_bc_sources_nodedup += family_source_counts['bc_scope']
                 sum_specs_nodedup += family_df['Spec(Mandatory)'].nunique()
-            
-            # 计算 Source QTY/Spec 比率
+                sum_specs_mix_speed_nodedup += get_spec_qty_mix_speed(family_df)
+
+            # 计算 Source QTY/Spec 比率 (标准版 - 去重/去重)
             ratio_dedup_dedup = (total / spec_total) if spec_total > 0 else 0
+
+            # 计算 Source QTY/Spec 比率 (不去重/不去重)
             ratio_nodedup_nodedup = (sum_sources_nodedup / sum_specs_nodedup) if sum_specs_nodedup > 0 else 0
+
+            # 计算 BC scope/Spec 比率 (不去重/不去重)
             ratio_bc_nodedup_nodedup = (sum_bc_sources_nodedup / sum_specs_nodedup) if sum_specs_nodedup > 0 else 0
-            
+
+            # 计算 mix speed 版本的比率 (使用匹配的分子和分母)
+            # Source QTY/Spec (去重/mix speed) - 使用全局去重 source / 全局 mix speed spec
+            ratio_dedup_mixspeed = (total / spec_total_mix_speed) if spec_total_mix_speed > 0 else 0
+
+            # Source QTY/Spec (不去重/mix speed, 不去重) - 使用按 Family 累加的值
+            ratio_nodedup_mixspeed_nodedup = (sum_sources_nodedup / sum_specs_mix_speed_nodedup) if sum_specs_mix_speed_nodedup > 0 else 0
+
+            # BC scope/Spec (不去重/mix speed, 不去重)
+            ratio_bc_nodedup_mixspeed_nodedup = (sum_bc_sources_nodedup / sum_specs_mix_speed_nodedup) if sum_specs_mix_speed_nodedup > 0 else 0
+
             pcr_summary.append({
                 'Type L1': type_l1,
                 'Generation Portfolio': gen,
@@ -538,12 +599,17 @@ def generate_pcr_summary(df):
                 'BC %': f"{bc_pct:.1f}%",
                 'Source in BC scope (不去重)': sum_bc_sources_nodedup,
                 'Source in BC scope/Spec (不去重/不去重)': f"{ratio_bc_nodedup_nodedup:.2f}",
+                'Source in BC scope/Spec (不去重/mix speed, 不去重)': f"{ratio_bc_nodedup_mixspeed_nodedup:.2f}",
                 'Overlap (PCR & BC)': overlap_count,
                 'Overlap %': f"{overlap_pct:.1f}%",
                 'Spec Total (去重)': spec_total,
                 'Spec Total (不去重)': sum_specs_nodedup,
+                'Spec Total (mix Speed)': spec_total_mix_speed,
+                'Spec Total (mix Speed, 不去重)': sum_specs_mix_speed_nodedup,
                 'Source QTY/Spec (去重/去重)': f"{ratio_dedup_dedup:.2f}",
                 'Source QTY/Spec (不去重/不去重)': f"{ratio_nodedup_nodedup:.2f}",
+                'Source QTY/Spec (去重/mix speed)': f"{ratio_dedup_mixspeed:.2f}",
+                'Source QTY/Spec (不去重/mix speed, 不去重)': f"{ratio_nodedup_mixspeed_nodedup:.2f}",
                 '说明': f'{source_counts["Source introduced by PCR"]} + {source_counts["Source in BC scope"]} - {overlap_count} = {total}'
             })
     
