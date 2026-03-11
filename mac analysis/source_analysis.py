@@ -27,7 +27,10 @@ def load_data(file_path):
 
 def get_unique_sources_by_description(df, group_by_cols=None):
     """
-    基于 Part Description 前 30 个字符去重后的唯一 source 计数
+    基于 Part Description 前 30 个字符 + Supplier 去重后的唯一 source 计数
+
+    去重规则：在同一个 Family Name + Supplier(Mandatory) 组合内，
+    如果 Part Description 前 30 个字符相同，则视为同一个 source
 
     参数:
         df: DataFrame 数据
@@ -41,6 +44,8 @@ def get_unique_sources_by_description(df, group_by_cols=None):
 
     # 检查必需的列是否存在
     desc_col = 'Part Description (No Need Input,Auto From Windchill)'
+    supplier_col = 'Supplier(Mandatory)'
+
     if desc_col not in df.columns:
         # 如果 Description 列不存在，回退到 Part Number 计数
         total = df['Part Number(Mandatory)'].nunique()
@@ -52,20 +57,21 @@ def get_unique_sources_by_description(df, group_by_cols=None):
     df = df.copy()
     df['_desc_prefix_30'] = df[desc_col].fillna('').astype(str).str[:30]
 
-    # 按 group_by_cols 分组（如 Family Name），在每组内按 desc_prefix_30 去重
+    # 去重：在同一个 Family Name + Supplier(Mandatory) 组合内，按 desc_prefix_30 去重
     unique_sources = set()
     unique_pcr_sources = set()
     unique_bc_sources = set()
 
-    # 构建唯一键：group_by_cols + _desc_prefix_30
+    # 构建唯一键：(Family Name, Supplier, Description前30字符)
     for _, row in df.iterrows():
         # 构建分组键
         group_key = tuple(row[col] for col in group_by_cols if col in row)
+        supplier = row.get(supplier_col, '') if supplier_col in row else ''
         desc_prefix = row['_desc_prefix_30']
         has_pcr = pd.notna(row.get('PCR'))
 
-        # 唯一键
-        unique_key = (group_key, desc_prefix)
+        # 唯一键：(group_key, supplier, desc_prefix)
+        unique_key = (group_key, supplier, desc_prefix)
 
         # 统计所有 source
         unique_sources.add(unique_key)
@@ -473,19 +479,20 @@ def generate_pcr_summary(df):
             source_counts = count_sources_by_pcr(gen_df)
             prod_qty = count_prod_qty(gen_df)
             
-            # 计算重叠的 Source（基于 Part Description 前 30 字符，既在 PCR 又在 BC scope 中）
+            # 计算重叠的 Source（基于 Family + Supplier + Part Description 前 30 字符）
             desc_col = 'Part Description (No Need Input,Auto From Windchill)'
+            supplier_col = 'Supplier(Mandatory)'
             if desc_col in gen_df.columns:
                 # 创建 Description 前缀用于去重
                 gen_df_copy = gen_df.copy()
                 gen_df_copy['_desc_prefix_30'] = gen_df_copy[desc_col].fillna('').astype(str).str[:30]
 
-                # 获取 PCR 和 BC scope 的 source（按 Family Name + desc_prefix_30）
+                # 获取 PCR 和 BC scope 的 source（按 Family Name + Supplier + desc_prefix_30）
                 pcr_df = gen_df_copy[gen_df_copy['PCR'].notna()]
                 bc_df = gen_df_copy[gen_df_copy['PCR'].isna()]
 
-                pcr_sources = set(zip(pcr_df['Family Name'], pcr_df['_desc_prefix_30']))
-                bc_sources = set(zip(bc_df['Family Name'], bc_df['_desc_prefix_30']))
+                pcr_sources = set(zip(pcr_df['Family Name'], pcr_df[supplier_col], pcr_df['_desc_prefix_30']))
+                bc_sources = set(zip(bc_df['Family Name'], bc_df[supplier_col], bc_df['_desc_prefix_30']))
                 overlap_sources = pcr_sources & bc_sources
                 overlap_count = len(overlap_sources)
             else:
