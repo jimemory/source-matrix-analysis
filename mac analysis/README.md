@@ -2,6 +2,124 @@
 
 分析不同 `Type L1` 在各维度下的 source 数量分布情况，支持 PCR 分类统计和 Generation Portfolio 维度。
 
+> **Quick Start**: 运行 `python source_analysis.py` 生成分析报告，或运行 `python visualize_analysis.py` 生成可视化图表。
+
+## 核心概念速查
+
+| 术语 | 说明 | 计算方式 |
+|------|------|----------|
+| **Source** | 零部件/物料 | 基于 `Part Number` + `Supplier` + `Description前30字符` 去重 |
+| **Spec** | 规格 | 标准版: `Spec(Mandatory)` 唯一值<br>Mix Speed版: `Type L1 + Density` 唯一值 |
+| **PCR** | 变更请求 | `PCR` 列有值 = PCR引入, 无值 = BC scope |
+| **去重/不去重** | 统计方式 | 去重=全局唯一, 不去重=按Family累加 |
+| **Mix Speed** | 忽略Speed差异 | 7500/8533/9600等不同Speed视为同一Spec |
+
+---
+
+## 代码架构
+
+```
+source_analysis.py
+├── load_data()                    # 从Excel加载数据(SP sheet)
+├── get_unique_sources_by_description()  # 核心: 基于Description+Supplier去重
+├── get_spec_qty_mix_speed()       # 核心: Mix Speed Spec计数
+├── count_sources_by_pcr()         # 统计Source数量(支持PCR分类)
+├── count_prod_qty()               # 统计产品数量
+├── analyze_by_*()                 # 各维度分析函数(6个维度)
+├── generate_pcr_summary()         # 生成PCR统计汇总
+└── generate_excel_report()        # 生成Excel报告
+
+visualize_analysis.py
+├── load_data()                    # 加载visualize raw data文件
+├── analyze_gen_trends()           # 分析Generation趋势
+├── create_visualization()         # 创建4宫格图表
+└── generate_summary_report()      # 生成文字报告
+```
+
+### 关键去重逻辑
+
+**Source去重** (`get_unique_sources_by_description`):
+- 唯一键: `(Family Name, Supplier(Mandatory), Description前30字符)`
+- 同一Family内，相同Supplier且Description前30字符相同 → 视为1个Source
+
+**Spec去重 - 标准版**:
+- 唯一键: `Spec(Mandatory)` 列的值
+- 不同Speed = 不同Spec
+
+**Spec去重 - Mix Speed版** (`get_spec_qty_mix_speed`):
+- 唯一键: `(Type L1, Density)`
+- 相同Type L1 + Density，不同Speed → 视为1个Spec
+- 例: LP5X 32Gb 7500 / 8533 / 9600 → 只计1个Spec
+
+---
+
+## 输入数据列名映射
+
+| 输入列名 | 在代码中的变量名 | 说明 |
+|----------|-----------------|------|
+| `Type L1` | `Type L1` | 组件类型 (LP5X/LP5/DDR5/DIMM5) |
+| `Generation Portfolio` | `Generation Portfolio` | 代际 (FY2425/FY2526/FY2627) |
+| `Family Name` | `Family Name` | 产品族名称 |
+| `Supplier(Mandatory)` | `Supplier(Mandatory)` | 供应商 |
+| `Part Number(Mandatory)` | `Part Number(Mandatory)` | 零件号 |
+| `Spec(Mandatory)` | `Spec(Mandatory)` | 规格描述 |
+| `Part Description (No Need Input,Auto From Windchill)` | `desc_col` | 零件描述(用于去重) |
+| `PCR` | `PCR` | PCR标识(有值=PCR,空值=BC scope) |
+| `Density` | `Density` | 密度(用于Mix Speed) |
+| `Speed` | `Speed` | 速度(在Mix Speed中被忽略) |
+| `BC Volume(pcs)` | `BC Volume(pcs)` | BC数量 |
+
+---
+
+## 输出列公式速查
+
+| 输出列名 | 公式 | 示例值 |
+|----------|------|--------|
+| **Source QTY (去重)** | 全局唯一 `(Family, Supplier, Desc30)` 组合数 | 31 |
+| **Source QTY (不去重)** | Sum(各Family的唯一Source数) | 366 |
+| **Spec Total (去重)** | 全局唯一 `Spec(Mandatory)` 数 | 9 |
+| **Spec Total (不去重)** | Sum(各Family的Spec数) | 121 |
+| **Spec Total (mix Speed)** | 全局唯一 `(Type L1, Density)` 组合数 | 5 |
+| **Source/Spec (去重/去重)** | Source QTY (去重) / Spec Total (去重) | 3.44 |
+| **Source/Spec (不去重/不去重)** | Source QTY (不去重) / Spec Total (不去重) | 3.02 |
+| **BC/Spec (不去重/不去重)** | Source in BC scope (不去重) / Spec Total (不去重) | 1.74 |
+| **Overlap (PCR & BC)** | 同时在PCR和BC中的Source数 | 22 |
+
+**重要公式**:
+```
+Source Total = PCR Sources + BC scope Sources - Overlap
+```
+
+---
+
+## 常见问题 (Troubleshooting)
+
+### Q1: Excel文件读取失败
+```bash
+# 错误: KeyError: 'PCR'
+# 原因: 没有读取SP sheet
+# 解决: 确保load_data()中使用 pd.read_excel(file, sheet_name='SP')
+```
+
+### Q2: 比率计算结果异常大
+```
+# 现象: Source/Spec = 100+
+# 检查: 是否使用了(去重/不去重)或(不去重/去重)的不匹配组合
+# 正确: (去重/去重) 或 (不去重/不去重) 配对使用
+```
+
+### Q3: Mix Speed Spec数量没有减少
+```
+# 检查: 输入数据中是否有'Density'列
+# 检查: Type L1 + Density组合是否确实覆盖了不同Speed
+```
+
+### Q4: 可视化脚本报错
+```bash
+# 安装依赖
+uv pip install matplotlib seaborn
+```
+
 ---
 
 ## 环境搭建
@@ -256,3 +374,44 @@ python source_analysis.py
 | 2026-03-10 | v1.7 | 新增 Prod QTY (产品数量) 和 Source QTY/Spec (Spec 比率) 指标，所有工作表统一更新 |
 | 2026-03-10 | v1.8 | 新增 Spec分析工作表，深入分析 Spec 复用度和两种 Source QTY/Spec 计算方式的差异 |
 | 2026-03-10 | v1.9 | PCR统计汇总 sheet 新增完整的 8 列 Spec/Source/BC 数据（含 BC scope 不去重计数和比率） |
+| 2026-03-11 | v2.0 | **重大更新**: 添加 Mix Speed Spec 逻辑 - 相同 Type L1 + Density 忽略 Speed 差异，统一计为1个Spec |
+| 2026-03-11 | v2.1 | 更新 Source 去重逻辑 - 添加 Supplier(Mandatory) 作为去重键之一 |
+| 2026-03-11 | v2.2 | 可视化脚本更新 - 支持 visualize raw data 3 mix spec.xlsx，图表标题标注 Mix Speed |
+
+---
+
+## 开发决策记录
+
+### 决策1: Source去重规则
+**问题**: 同一个 Family 中，相同 Description 但不同 Part Number 的物料是否应该去重？
+**决策**: 是。使用 `(Family, Supplier, Description前30)` 作为唯一键。
+**原因**: 用户示例中 `RMSB3400MB06IVF-5600 M0` 和 `RMSB3400MB06IVF-5600 I0` 应为同一Source。
+
+### 决策2: Mix Speed Spec 定义
+**问题**: 不同 Speed (7500/8533/9600) 但相同 Density 的 Spec 是否应该合并？
+**决策**: 是。使用 `(Type L1, Density)` 作为唯一键。
+**原因**: 从 sourcing 角度，不同 speed 的 memory 属于同一 sourcing pool，分开计算会低估 Source/Spec 比率。
+
+### 决策3: 比率计算配对
+**问题**: Source QTY/Spec 应该使用 (去重/去重) 还是 (不去重/不去重)？
+**决策**: 两者都提供，但含义不同：
+- `(去重/去重)`: 全局标准化程度
+- `(不去重/不去重)`: 产品级平均标准化程度
+
+---
+
+## AI Catch-up Checklist
+
+对于没有上下文的 AI，请按以下顺序理解项目：
+
+1. [ ] 阅读 **核心概念速查** 了解术语
+2. [ ] 阅读 **代码架构** 了解函数分工
+3. [ ] 阅读 **关键去重逻辑** 理解核心业务规则
+4. [ ] 查看 **输入数据列名映射** 确认数据结构
+5. [ ] 运行 `python source_analysis.py` 查看输出
+6. [ ] 查看生成的 `source_analysis_report.xlsx` 各工作表
+7. [ ] 阅读 **开发决策记录** 理解设计选择
+
+**修改代码前必读**:
+- 所有去重逻辑集中在 `get_unique_sources_by_description()` 和 `get_spec_qty_mix_speed()`
+- 新增列需要在 `generate_pcr_summary()` 中添加，并在 `generate_excel_report()` 中确保导出
